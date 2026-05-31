@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
+  <title>Lucky Spin - Earning Bot</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      font-family: 'Segoe UI', sans-serif;
+      color: white; padding: 20px;
+    }
+    .card {
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 24px; padding: 36px 28px;
+      text-align: center; max-width: 360px;
+      width: 100%; backdrop-filter: blur(12px);
+      box-shadow: 0 8px 40px rgba(0,0,0,0.4);
+    }
+    .icon { font-size: 60px; margin-bottom: 12px; animation: bounce 1.5s infinite; }
+    @keyframes bounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-10px)} }
+    h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; color: #FFD700; }
+    .subtitle { font-size: 13px; color: rgba(255,255,255,0.6); margin-bottom: 24px; }
+
+    /* wheel container */
+    .wheel-wrapper {
+      position: relative;
+      width: 260px;
+      height: 260px;
+      margin: 10px auto 20px;
+    }
+    canvas {
+      width: 100% !important;
+      height: 100% !important;
+      border-radius: 50%;
+      box-shadow: 0 0 0 6px #2c2c2c, 0 0 0 10px #f0b27a;
+    }
+    #spinBtn {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 70px;
+      height: 70px;
+      background: radial-gradient(circle, #ffcc33, #ff9900);
+      border: none;
+      border-radius: 50%;
+      font-size: 1.5rem;
+      font-weight: bold;
+      color: #2c2c2c;
+      cursor: pointer;
+      box-shadow: 0 4px 12px black;
+      z-index: 10;
+      font-family: monospace;
+    }
+    #spinBtn:active { transform: translate(-50%, -50%) scale(0.94); }
+    #spinBtn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    .info {
+      font-size: 12px; color: rgba(255,255,255,0.5);
+      margin-bottom: 20px; line-height: 1.8;
+      background: rgba(255,255,255,0.05);
+      border-radius: 12px; padding: 12px;
+    }
+    .result-area {
+      margin-top: 12px;
+      background: rgba(0,0,0,0.4);
+      border-radius: 28px;
+      padding: 12px;
+    }
+    .message {
+      font-size: 14px;
+      font-weight: 500;
+      margin-bottom: 8px;
+    }
+    .btn-ad {
+      background: linear-gradient(135deg, #2ecc71, #27ae60);
+      border: none;
+      padding: 10px 18px;
+      border-radius: 40px;
+      color: white;
+      font-weight: bold;
+      font-size: 0.9rem;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 5px;
+    }
+    .btn-ad:active { transform: scale(0.97); }
+    .footer-note { font-size: 0.7rem; text-align: center; margin-top: 16px; color: #aaa; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="icon">🎡</div>
+  <h1>Lucky Spin</h1>
+  <p class="subtitle">Ek baar ghumao aur jeeto!</p>
+
+  <div class="wheel-wrapper">
+    <canvas id="wheelCanvas" width="500" height="500"></canvas>
+    <button id="spinBtn">SPIN</button>
+  </div>
+
+  <div class="info">
+    🎁 Rewards: ₹1, ₹3, ₹5, ₹20, ₹50 + 🎬 Ads Task<br/>
+    ⚡ Jyada chances: ₹1, ₹3, ₹5, Ads<br/>
+    🎯 Rare: ₹20, ₹50
+  </div>
+
+  <div class="result-area">
+    <div class="message" id="resultMessage">✨ Tap SPIN and try your luck ✨</div>
+    <div id="extraAction"></div>
+  </div>
+  <div class="footer-note">Daily limit: 1 spin • Sahi time par aayein</div>
+</div>
+
+<script>
+  // --------------------------------------------------------------
+  // Rewards with WEIGHTED probability (higher weight = more common)
+  // --------------------------------------------------------------
+  const SEGMENTS = [
+    { name: "₹1",    value: 1,    type: "cash", weight: 30 },
+    { name: "₹3",    value: 3,    type: "cash", weight: 25 },
+    { name: "₹5",    value: 5,    type: "cash", weight: 20 },
+    { name: "🎁 Ads", value: "ads", type: "ads", weight: 15 },
+    { name: "₹20",   value: 20,   type: "cash", weight: 6 },
+    { name: "₹50",   value: 50,   type: "cash", weight: 4 }
+  ];
+
+  // Calculate angles based on weight
+  let totalWeight = SEGMENTS.reduce((s, seg) => s + seg.weight, 0);
+  let segmentsWithAngle = [];
+  let start = 0;
+  for (let seg of SEGMENTS) {
+    let angle = (seg.weight / totalWeight) * 360;
+    segmentsWithAngle.push({
+      ...seg,
+      start: start,
+      end: start + angle,
+      angle: angle
+    });
+    start += angle;
+  }
+
+  // Colors (vibrant but clean)
+  const colors = ["#FF5252","#FF8A65","#FFD966","#4CAF50","#2196F3","#9C27B0"];
+  let segmentColors = segmentsWithAngle.map((_,i) => colors[i % colors.length]);
+
+  const canvas = document.getElementById('wheelCanvas');
+  const ctx = canvas.getContext('2d');
+  let spinning = false;
+  let currentRotation = 0;
+  let animFrame = null;
+
+  const tg = window.Telegram.WebApp;
+  tg.ready();
+  tg.expand();
+
+  // get user_id from URL
+  const urlParams = new URLSearchParams(window.location.search);
+  const userId = urlParams.get('user_id');
+  if (!userId) {
+    document.getElementById('resultMessage').innerHTML = "⚠️ Error: User ID missing. Restart bot.";
+  }
+
+  // Backend URL (same as your bot's domain - Railway)
+  const BACKEND_URL = "https://earning-bot-production.up.railway.app";
+
+  function drawWheel(rotationDeg = 0) {
+    const size = canvas.width;
+    const center = size/2;
+    const radius = center - 6;
+    ctx.clearRect(0, 0, size, size);
+    for (let i=0; i<segmentsWithAngle.length; i++) {
+      const seg = segmentsWithAngle[i];
+      const startAng = seg.start + rotationDeg;
+      const endAng = seg.end + rotationDeg;
+      ctx.beginPath();
+      ctx.moveTo(center, center);
+      ctx.arc(center, center, radius, startAng * Math.PI/180, endAng * Math.PI/180);
+      ctx.closePath();
+      ctx.fillStyle = segmentColors[i];
+      ctx.fill();
+      ctx.save();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = "white";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      // text
+      ctx.save();
+      ctx.translate(center, center);
+      ctx.rotate((startAng + seg.angle/2) * Math.PI/180);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = "bold 16px 'Segoe UI'";
+      ctx.fillStyle = "#1f1f1f";
+      ctx.fillText(seg.name, radius * 0.7, 6);
+      ctx.restore();
+    }
+    // center circle
+    ctx.beginPath();
+    ctx.arc(center, center, 22, 0, 2*Math.PI);
+    ctx.fillStyle = "#f5e6d3";
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(center, center, 16, 0, 2*Math.PI);
+    ctx.fillStyle = "#ffaa33";
+    ctx.fill();
+    // pointer at top
+    ctx.beginPath();
+    ctx.moveTo(center-12, 12);
+    ctx.lineTo(center, 0);
+    ctx.lineTo(center+12, 12);
+    ctx.fillStyle = "#FFD700";
+    ctx.fill();
+  }
+
+  function getCurrentSegment(rotation) {
+    const pointerAngle = (360 - (rotation % 360)) % 360;
+    for (let seg of segmentsWithAngle) {
+      if (pointerAngle >= seg.start && pointerAngle < seg.end) return seg;
+    }
+    return segmentsWithAngle[0];
+  }
+
+  function spinWheel() {
+    if (spinning) return;
+    spinning = true;
+    const spinBtn = document.getElementById('spinBtn');
+    spinBtn.disabled = true;
+    const spinDeg = 1800 + Math.random() * 1800;
+    const targetRotation = currentRotation + spinDeg;
+    const startTime = performance.now();
+    const duration = 2500;
+    function animate(now) {
+      const elapsed = now - startTime;
+      let t = Math.min(1, elapsed/duration);
+      const ease = 1 - Math.pow(1-t, 3);
+      const newRot = currentRotation + spinDeg * ease;
+      drawWheel(newRot);
+      if (t < 1) {
+        animFrame = requestAnimationFrame(animate);
+      } else {
+        currentRotation = targetRotation % 360;
+        drawWheel(currentRotation);
+        const reward = getCurrentSegment(currentRotation);
+        spinning = false;
+        spinBtn.disabled = false;
+        processReward(reward);
+      }
+    }
+    if (animFrame) cancelAnimationFrame(animFrame);
+    animFrame = requestAnimationFrame(animate);
+  }
+
+  async function processReward(segment) {
+    const msgDiv = document.getElementById('resultMessage');
+    const extraDiv = document.getElementById('extraAction');
+    extraDiv.innerHTML = '';
+    if (segment.type === "cash") {
+      const amt = segment.value;
+      msgDiv.innerHTML = `🎉 Badhai ho! ₹${amt} jeete! 🎉<br>Jama ho raha hai...`;
+      try {
+        const url = `${BACKEND_URL}/spin-reward?user_id=${userId}&amount=${amt}`;
+        const res = await fetch(url);
+        if (res.ok) {
+          msgDiv.innerHTML = `✅ ₹${amt} aapke wallet mein add ho gaye! 🎊`;
+        } else {
+          msgDiv.innerHTML = `⚠️ Server error. Baad mein try karein.`;
+        }
+      } catch(e) {
+        msgDiv.innerHTML = `⚠️ Network error. Reward save nahi hua.`;
+      }
+    } 
+    else if (segment.type === "ads") {
+      msgDiv.innerHTML = `🎁 Aapko Ads Task mila! 🎁<br>Ad dekho aur ₹5-₹7 turant pao!`;
+      const adUrl = `${BACKEND_URL}/ad?uid=${userId}&lang=hi`;
+      const btn = document.createElement('button');
+      btn.innerText = "▶️ Ad Dekho aur Kamao";
+      btn.className = "btn-ad";
+      btn.onclick = () => { tg.openLink(adUrl); };
+      extraDiv.appendChild(btn);
+    }
+  }
+
+  document.getElementById('spinBtn').addEventListener('click', spinWheel);
+  drawWheel(0);
+</script>
+</body>
+</html>
